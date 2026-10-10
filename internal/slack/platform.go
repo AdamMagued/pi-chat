@@ -401,7 +401,8 @@ func (r *renderer) Finish(ctx context.Context, final string) error {
 }
 
 // Fail reports a failed turn in the same message, keeping whatever partial
-// answer arrived first.
+// answer arrived first. When no message exists yet or the message was deleted,
+// it posts a new message into the thread instead.
 func (r *renderer) Fail(ctx context.Context, cause error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

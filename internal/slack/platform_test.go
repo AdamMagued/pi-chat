@@ -488,6 +488,9 @@ func TestFailBeforeStartPostsFailureInThread(t *testing.T) {
 	if got := calls[0].params["text"]; got != ":warning: pi-chat: "+cause {
 		t.Errorf("failure text = %v, want the full cause", got)
 	}
+	if r.Progress() != "1700000000.000001" {
+		t.Errorf("r.Progress() = %q, want 1700000000.000001", r.Progress())
+	}
 }
 
 func TestFailDeletedMessagePostsFailureInThread(t *testing.T) {
@@ -521,6 +524,62 @@ func TestFailDeletedMessagePostsFailureInThread(t *testing.T) {
 	}
 	if len(text) > maxMessage {
 		t.Errorf("fallback text is %d bytes, exceeds %d", len(text), maxMessage)
+	}
+	if r.Progress() != "1700000000.000001" {
+		t.Errorf("r.Progress() = %q, want 1700000000.000001", r.Progress())
+	}
+}
+
+func TestFailStreamingMessageNotFoundFallsBackToPost(t *testing.T) {
+	stub := &stubSlack{}
+	r := newTestRenderer(t, stub, "stream")
+	ctx := context.Background()
+
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	stub.mu.Lock()
+	stub.failed = map[string]string{"chat.update": "message_not_found"}
+	stub.mu.Unlock()
+
+	cause := errors.New("stream failed")
+	if err := r.Fail(ctx, cause); err != nil {
+		t.Fatalf("Fail returned error: %v", err)
+	}
+
+	methods := stub.methods()
+	want := []string{"chat.startStream", "chat.stopStream", "chat.update", "chat.postMessage"}
+	if strings.Join(methods, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", methods, want)
+	}
+}
+
+func TestFailPropagatesOtherUpdateErrors(t *testing.T) {
+	stub := &stubSlack{}
+	r := newTestRenderer(t, stub, "patch")
+	ctx := context.Background()
+
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	stub.mu.Lock()
+	stub.failed = map[string]string{"chat.update": "not_in_channel"}
+	stub.mu.Unlock()
+
+	err := r.Fail(ctx, errors.New("failure"))
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !IsCode(err, "not_in_channel") {
+		t.Fatalf("err = %v, want not_in_channel", err)
+	}
+
+	for _, call := range stub.recorded()[1:] {
+		if call.method == "chat.postMessage" {
+			t.Fatalf("unexpected chat.postMessage call after update error")
+		}
 	}
 }
 
