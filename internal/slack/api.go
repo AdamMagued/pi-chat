@@ -433,10 +433,11 @@ type Message struct {
 	Text        string `json:"text"`
 	ReplyCount  int    `json:"reply_count"`
 	LatestReply string `json:"latest_reply"`
-	Files       []struct {
-		ID string `json:"id"`
-	} `json:"files"`
+	Files       []File `json:"files"`
 }
+
+// Reply is retained as the name for a message returned by conversations.replies.
+type Reply = Message
 
 // Bounds on reading a thread back. The page size is Slack's maximum, and the
 // fetch limit is a sanity cap: a thread longer than this is a conversation the

@@ -128,6 +128,16 @@ outside the access policy get a `shrug` reaction and a private refusal. Plain te
 channel or group DM roots is ignored, which keeps busy rooms from turning every later
 message into a prompt.
 
+### Images
+
+Attach a PNG, JPEG, GIF or WebP to a mention (or a DM message) and the agent
+receives the actual image, including image-only requests. Screenshots posted earlier
+in the thread are included as conversation context when you next address the bot.
+A turn carries up to four images, at most 5 MiB each and 10 MiB total; unavailable,
+oversized and unsupported attachments produce a visible warning. Other file types
+are not supported yet. The bot needs the `files:read` scope (included in both app
+manifests); reinstall the Slack app if your existing token does not have it.
+
 State lives in SQLite at `paths.db_path` (created on first run, inside a 0700 directory). It
 holds thread keys, session identities, cursors and handled event IDs — never
 transcripts, prompts, or answers.
