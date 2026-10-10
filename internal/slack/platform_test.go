@@ -186,6 +186,35 @@ func newTestPlatform(t *testing.T, stub *stubSlack, mode string) *Platform {
 	return NewPlatform(newStubAPI(t, stub), cfg, Identity{TeamID: "T1"}, discardLogger())
 }
 
+func TestAcknowledgeRequestReactsToOriginalMessage(t *testing.T) {
+	for _, tc := range []struct {
+		allowed  bool
+		reaction string
+	}{
+		{allowed: true, reaction: "eyes"},
+		{allowed: false, reaction: "shrug"},
+	} {
+		stub := &stubSlack{}
+		platform := newTestPlatform(t, stub, "patch")
+		message := testMessage()
+		message.TS = "1700000000.000200"
+
+		if err := platform.AcknowledgeRequest(context.Background(), message, tc.allowed); err != nil {
+			t.Fatalf("AcknowledgeRequest(allowed=%v): %v", tc.allowed, err)
+		}
+
+		calls := stub.recorded()
+		if len(calls) != 1 || calls[0].method != "reactions.add" {
+			t.Fatalf("calls = %+v, want one reactions.add", calls)
+		}
+		params := calls[0].params
+		if params["channel"] != message.Thread.Channel || params["timestamp"] != message.TS || params["name"] != tc.reaction {
+			t.Errorf("reactions.add params = %+v, want channel=%q timestamp=%q name=%q",
+				params, message.Thread.Channel, message.TS, tc.reaction)
+		}
+	}
+}
+
 func newTestRenderer(t *testing.T, stub *stubSlack, mode string) *renderer {
 	t.Helper()
 	return testRenderer(t, newTestPlatform(t, stub, mode))
@@ -409,6 +438,89 @@ func TestFailKeepsThePartialAnswer(t *testing.T) {
 	text, _ := stub.recorded()[len(stub.recorded())-1].params["text"].(string)
 	if !strings.Contains(text, "half an answer") || !strings.Contains(text, "connection lost") {
 		t.Fatalf("failure text = %q, want the partial answer and the cause", text)
+	}
+}
+
+func TestFailKeepsCauseWhenPartialAnswerIsLong(t *testing.T) {
+	stub := &stubSlack{}
+	r := newTestRenderer(t, stub, "patch")
+	ctx := context.Background()
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r.text.WriteString(strings.Repeat("p", maxMessage))
+	cause := errors.New("create the session: pi binary not found")
+
+	if err := r.Fail(ctx, cause); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := stub.recorded()
+	text := calls[len(calls)-1].params["text"].(string)
+	if !strings.Contains(text, cause.Error()) {
+		t.Fatalf("failure text omitted cause %q", cause)
+	}
+	if !strings.Contains(text, "truncated") {
+		t.Fatalf("failure text should mark the partial answer as truncated: %q", text)
+	}
+	if len(text) > maxMessage {
+		t.Fatalf("failure text is %d bytes, exceeds %d", len(text), maxMessage)
+	}
+}
+
+func TestFailBeforeStartPostsFailureInThread(t *testing.T) {
+	stub := &stubSlack{}
+	r := newTestRenderer(t, stub, "patch")
+	ctx := context.Background()
+	cause := "create the session: gwclient: find pi binary: no such file"
+
+	if err := r.Fail(ctx, errors.New(cause)); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := stub.recorded()
+	if len(calls) != 1 || calls[0].method != "chat.postMessage" {
+		t.Fatalf("calls = %v, want a new failure message without an update", stub.methods())
+	}
+	if got := calls[0].params["thread_ts"]; got != testMessage().Thread.ThreadTS {
+		t.Errorf("thread_ts = %v, want %q", got, testMessage().Thread.ThreadTS)
+	}
+	if got := calls[0].params["text"]; got != ":warning: pi-chat: "+cause {
+		t.Errorf("failure text = %v, want the full cause", got)
+	}
+}
+
+func TestFailDeletedMessagePostsFailureInThread(t *testing.T) {
+	stub := &stubSlack{}
+	r := newTestRenderer(t, stub, "patch")
+	ctx := context.Background()
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r.text.WriteString(strings.Repeat("p", maxMessage))
+	stub.mu.Lock()
+	stub.failed = map[string]string{"chat.update": "message_not_found"}
+	stub.mu.Unlock()
+
+	cause := errors.New("prompt: connection lost")
+	if err := r.Fail(ctx, cause); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := stub.recorded()
+	if got, want := strings.Join(stub.methods(), ","), "chat.postMessage,chat.update,chat.postMessage"; got != want {
+		t.Fatalf("calls = %s, want %s", got, want)
+	}
+	last := calls[len(calls)-1]
+	if got := last.params["thread_ts"]; got != testMessage().Thread.ThreadTS {
+		t.Errorf("fallback thread_ts = %v, want %q", got, testMessage().Thread.ThreadTS)
+	}
+	text := last.params["text"].(string)
+	if !strings.Contains(text, cause.Error()) || !strings.Contains(text, "truncated") {
+		t.Errorf("fallback text = %q, want truncated partial answer and full cause", text)
+	}
+	if len(text) > maxMessage {
+		t.Errorf("fallback text is %d bytes, exceeds %d", len(text), maxMessage)
 	}
 }
 
