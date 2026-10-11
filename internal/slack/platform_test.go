@@ -495,10 +495,28 @@ func TestFailBeforeStartPostsFailureInThread(t *testing.T) {
 
 func TestFailDeletedMessagePostsFailureInThread(t *testing.T) {
 	stub := &stubSlack{}
+	const initialTS = "1700000000.000001"
+	const fallbackTS = "1700000000.000002"
+	postCount := 0
+	stub.bodies = func(method string, _ map[string]any) string {
+		if method != "chat.postMessage" {
+			return ""
+		}
+		postCount++
+		ts := initialTS
+		if postCount == 2 {
+			ts = fallbackTS
+		}
+		return fmt.Sprintf(`{"ok":true,"ts":%q}`, ts)
+	}
+
 	r := newTestRenderer(t, stub, "patch")
 	ctx := context.Background()
 	if err := r.Start(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if got := r.Progress(); got != initialTS {
+		t.Fatalf("initial r.Progress() = %q, want %q", got, initialTS)
 	}
 	r.text.WriteString(strings.Repeat("p", maxMessage))
 	stub.mu.Lock()
@@ -525,8 +543,8 @@ func TestFailDeletedMessagePostsFailureInThread(t *testing.T) {
 	if len(text) > maxMessage {
 		t.Errorf("fallback text is %d bytes, exceeds %d", len(text), maxMessage)
 	}
-	if r.Progress() != "1700000000.000001" {
-		t.Errorf("r.Progress() = %q, want 1700000000.000001", r.Progress())
+	if got := r.Progress(); got != fallbackTS {
+		t.Errorf("fallback r.Progress() = %q, want %q", got, fallbackTS)
 	}
 }
 
